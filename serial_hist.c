@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <opencv/cv.h>
-#include <opencv/highgui.h>
+
+
 
 #define MAX_INTENSITY 255
 
@@ -34,7 +34,8 @@ void equalize_image(unsigned char *image, int cdf[], int size) {
 
 int main() {
     // Read the image file
-    IplImage* img = cvLoadImage("input.jpg", CV_LOAD_IMAGE_GRAYSCALE);
+    Image img = {0};
+ *  read_png_file("image.png", PNG_COLOR_TYPE_GRAY, &img);
     if (!img) {
         printf("Could not open the image file\n");
         return -1;
