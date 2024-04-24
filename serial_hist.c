@@ -1,16 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
-
-
+#include <opencv/cv.h>
+#include <opencv/highgui.h>
 
 #define MAX_INTENSITY 255
 
-void calculate_histogram(int histogram[], unsigned char *image, int size) {
+// Calculate the histogram of the image
+void calculate_histogram(int histogram[], png_byte* image, int size) {
     for(int i = 0; i < size; i++) {
         histogram[image[i]]++;
     }
 }
 
+// Calculate the cumulative distribution function (CDF) of the histogram
 void calculate_cdf(int cdf[], int histogram[]) {
     cdf[0] = histogram[0];
     for(int i = 1; i <= MAX_INTENSITY; i++) {
@@ -18,6 +20,7 @@ void calculate_cdf(int cdf[], int histogram[]) {
     }
 }
 
+// Normalize the CDF to the range [0, 255]
 void normalize_cdf(int cdf[], int size) {
     int min_cdf = 0;
     while(cdf[min_cdf] == 0) min_cdf++;
@@ -26,7 +29,8 @@ void normalize_cdf(int cdf[], int size) {
     }
 }
 
-void equalize_image(unsigned char *image, int cdf[], int size) {
+// Equalize the image using the CDF
+void equalize_image(png_byte* image, int cdf[], int size) {
     for(int i = 0; i < size; i++) {
         image[i] = cdf[image[i]];
     }
@@ -34,8 +38,7 @@ void equalize_image(unsigned char *image, int cdf[], int size) {
 
 int main() {
     // Read the image file
-    Image img = {0};
- *  read_png_file("image.png", PNG_COLOR_TYPE_GRAY, &img);
+    IplImage* img = cvLoadImage("input.jpg", CV_LOAD_IMAGE_GRAYSCALE);
     if (!img) {
         printf("Could not open the image file\n");
         return -1;
@@ -45,6 +48,8 @@ int main() {
     unsigned char *image = (unsigned char *)img->imageData;
     int histogram[MAX_INTENSITY + 1] = {0};
     int cdf[MAX_INTENSITY + 1] = {0};
+    png_byte* image = img.data[0];
+    int size = img.width * img.height;
 
     calculate_histogram(histogram, image, size);
     calculate_cdf(cdf, histogram);
@@ -52,24 +57,9 @@ int main() {
     equalize_image(image, cdf, size);
 
     // Write the equalized image to a file
-    if (!cvSaveImage("output.jpg", img)) {
-        printf("Could not save the image file\n");
-        return -1;
-    }
+    write_png_file("equalized.png", &img);
 
-    cvReleaseImage(&img);
+    // Free the image data
+    free_image_data(&img);
     return 0;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
