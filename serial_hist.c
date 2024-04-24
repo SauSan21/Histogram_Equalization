@@ -42,8 +42,7 @@ void equalize_image(png_byte* image, int cdf[], int size) {
     }
 }
 
-int main() {
-    // Read the image file
+int main(int argc, char *argv[]) {
     struct timespec start, end;
     double best_time = 0.0;
     int NUM_RUNS = 10;
@@ -54,11 +53,18 @@ int main() {
         sprintf(filename, "equalizer%d.png", run);
         remove(filename);
     }
+
+    if (argc < 2) {
+        printf("Usage: %s <image.png>\n", argv[0]);
+        return 1;
+    }
+
+    char *input_file = argv[1];
     
     for (int run = 0; run < NUM_RUNS; run++) {
         // Read the image file
         Image img = {0};
-        read_png_file("first.png", PNG_COLOR_TYPE_GRAY, &img);
+        read_png_file(input_file, PNG_COLOR_TYPE_GRAY, &img);
 
         // Calculate the histogram, CDF, and equalize the image
         int histogram[MAX_INTENSITY + 1] = {0};
