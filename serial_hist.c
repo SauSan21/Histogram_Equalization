@@ -43,7 +43,6 @@ void equalize_image(png_byte* image, int cdf[], int size) {
 }
 
 int main() {
-    // Read the image file
     struct timespec start, end;
     double best_time = 0.0;
     int NUM_RUNS = 10;
