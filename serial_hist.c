@@ -1,9 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "image.h"
 
 #define MAX_INTENSITY 255
+
+
+double get_time_diff(struct timespec *start, struct timespec *end) {
+    return (end->tv_sec - start->tv_sec) + (end->tv_nsec - start->tv_nsec) / 1000000000.0;
+}
 
 // Calculate the histogram of the image
 void calculate_histogram(int histogram[], png_byte* image, int size) {
@@ -38,24 +44,56 @@ void equalize_image(png_byte* image, int cdf[], int size) {
 
 int main() {
     // Read the image file
-    Image img = {0};
-    read_png_file("first.png", PNG_COLOR_TYPE_GRAY, &img);
+    struct timespec start, end;
+    double best_time = 0.0;
+    int NUM_RUNS = 10;
 
-    // Calculate the histogram, CDF, and equalize the image
-    int histogram[MAX_INTENSITY + 1] = {0};
-    int cdf[MAX_INTENSITY + 1] = {0};
-    png_byte* image = img.data[0];
-    int size = img.width * img.height;
+    // Remove the files from previous runs
+    for (int run = 0; run < NUM_RUNS; run++) {
+        char filename[50];
+        sprintf(filename, "equalizer%d.png", run);
+        remove(filename);
+    }
+    
+    for (int run = 0; run < NUM_RUNS; run++) {
+        // Read the image file
+        Image img = {0};
+        read_png_file("first.png", PNG_COLOR_TYPE_GRAY, &img);
 
-    calculate_histogram(histogram, image, size);
-    calculate_cdf(cdf, histogram);
-    normalize_cdf(cdf, size);
-    equalize_image(image, cdf, size);
+        // Calculate the histogram, CDF, and equalize the image
+        int histogram[MAX_INTENSITY + 1] = {0};
+        int cdf[MAX_INTENSITY + 1] = {0};
+        png_byte* image = img.data[0];
+        int size = img.width * img.height;
 
-    // Write the equalized image to a file
-    write_png_file("equalized.png", &img);
+        clock_gettime(CLOCK_MONOTONIC, &start); // get the start time
+
+        calculate_histogram(histogram, image, size);
+        calculate_cdf(cdf, histogram);
+        normalize_cdf(cdf, size);
+        equalize_image(image, cdf, size);
+
+        clock_gettime(CLOCK_MONOTONIC, &end); // get the end time
+        double time = get_time_diff(&start, &end); // compute average difference
+        if (run == 0 || time < best_time) {
+            best_time = time;
+        }
+
+        // Create a new filename for each run
+        char filename[50];
+        sprintf(filename, "equalizer%d.png", run);
+
+        // Write the equalized image to a new file each time
+        write_png_file(filename, &img);
+
+        free_image_data(&img);
+    }
+
+    printf("Best time: %f\n", best_time);
+
 
     // Free the image data
-    free_image_data(&img);
+    
     return 0;
 }
+
