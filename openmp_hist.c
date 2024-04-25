@@ -12,7 +12,7 @@ double get_time_diff(struct timespec *start, struct timespec *end) {
 
 // Calculate the histogram of the image
 void calculate_histogram(int histogram[], png_byte* image, int size) {
-    #pragma omp parallel for default(none) shared(histogram, image, size) num_threads(4)
+    #pragma omp parallel for default(none) shared(histogram, image, size) num_threads(4) schedule(dynamic, size/4)
     for(int i = 0; i < size; i++) {
         #pragma omp atomic
         histogram[image[i]]++;
@@ -31,7 +31,7 @@ void calculate_cdf(int cdf[], int histogram[]) {
 void normalize_cdf(int cdf[], int size) {
     int min_cdf = 0;
     while(cdf[min_cdf] == 0) min_cdf++;
-    #pragma omp parallel for default(none) shared(cdf, size, min_cdf) num_threads(4)
+    #pragma omp parallel for default(none) shared(cdf, size, min_cdf) num_threads(4) schedule(dynamic, size/4)
     for(int i = 0; i <= MAX_INTENSITY; i++) {
         cdf[i] = ((cdf[i] - min_cdf) * MAX_INTENSITY) / (size - min_cdf);
     }
@@ -39,7 +39,7 @@ void normalize_cdf(int cdf[], int size) {
 
 // Equalize the image using the CDF
 void equalize_image(png_byte* image, int cdf[], int size) {
-    #pragma omp parallel for default(none) shared(image, cdf, size) num_threads(4)
+    #pragma omp parallel for default(none) shared(image, cdf, size) num_threads(4) 
     for(int i = 0; i < size; i++) {
         image[i] = cdf[image[i]];
     }
@@ -48,7 +48,7 @@ void equalize_image(png_byte* image, int cdf[], int size) {
 int main(int argc, char *argv[]) {
     struct timespec start, end;
     double best_time = 0.0;
-    int NUM_RUNS = 10;
+    int NUM_RUNS = 20;
 
     // Remove the files from previous runs
     for (int run = 0; run < NUM_RUNS; run++) {
