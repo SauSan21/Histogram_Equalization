@@ -22,7 +22,7 @@
 
 
 __global__ 
-void calculate_histogram(int *histogram, png_byte *image, int size) {
+void calculate_histogram(unsigned int *histogram, png_byte *image, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
         atomicAdd(&histogram[image[i]], 1);
@@ -30,7 +30,7 @@ void calculate_histogram(int *histogram, png_byte *image, int size) {
 }
 
 __global__ 
-void exclusive_scan(int *input, int *output, int length) {
+void exclusive_scan(unsigned int *input, png_byte *output, int length) {
     extern __shared__ int temp[];  // allocated on invocation
     int thid = threadIdx.x;
     int offset = 1;
@@ -68,7 +68,7 @@ void exclusive_scan(int *input, int *output, int length) {
 }
 
 __global__ 
-void normalize_cdf(int *cdf, int size, int min_cdf) {
+void normalize_cdf(png_byte *cdf, int size, int min_cdf) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i <= MAX_INTENSITY) {
         cdf[i] = ((cdf[i] - min_cdf) * MAX_INTENSITY) / (size - min_cdf);
@@ -76,7 +76,7 @@ void normalize_cdf(int *cdf, int size, int min_cdf) {
 }
 
 __global__ 
-void equalize(png_byte *image, int *cdf, int size) {
+void equalize(png_byte *image, png_byte *cdf, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
         image[i] = cdf[image[i]];
@@ -88,13 +88,20 @@ int main(int argc, char *argv[]) {
     // ... (load image into "image" array and initialize "histogram" and "cdf" arrays) ...
     
     Image img = {0};
+    if (argc < 2) {
+        printf("Usage: %s <image.png>\n", argv[0]);
+        return 1;
+    }
+
+    char *input_file = argv[1];
     read_png_file(input_file, PNG_COLOR_TYPE_GRAY, &img);
-    png_byte *image = img.data;
+    png_byte *image = img.data[0];
     int size = img.width * img.height;
     int histogram[MAX_INTENSITY + 1] = {0};
     int cdf[MAX_INTENSITY + 1] = {0};
     
-    int *d_histogram, *d_image, *d_cdf;
+    png_byte *d_image, *d_cdf;
+    unsigned int *d_histogram;
     CHECK(cudaMalloc(&d_histogram, (MAX_INTENSITY + 1) * sizeof(int)));
     CHECK(cudaMalloc(&d_image, size * sizeof(png_byte)));
     CHECK(cudaMalloc(&d_cdf, (MAX_INTENSITY + 1) * sizeof(int)));
@@ -106,7 +113,7 @@ int main(int argc, char *argv[]) {
 
     CHECK(cudaMemcpy(histogram, d_histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
-    calculate_cdf<<<1, (MAX_INTENSITY + 1) / 2, (MAX_INTENSITY + 1) * sizeof(int)>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
+    exclusive_scan<<<1, MAX_INTENSITY + 1, (MAX_INTENSITY + 1) * sizeof(int)>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
 
     CHECK(cudaMemcpy(cdf, d_cdf, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
@@ -125,5 +132,15 @@ int main(int argc, char *argv[]) {
 
 
     // ... (save image to disk) ...
+
+    char filename[50];
+    sprintf(filename, "equalizer%d.png");
+
+    // Write the equalized image to a new file each time
+    write_png_file(filename, &img);
+
+    // Free the image data on the GPU
+    CHECK(cudaFree(img.data));
+
     
 }
