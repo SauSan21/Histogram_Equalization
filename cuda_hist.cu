@@ -4,7 +4,6 @@
 #include <time.h>
 
 #include <cuda_runtime.h>
-
 #include "image.h"
 
 #define MAX_INTENSITY 255
@@ -139,8 +138,7 @@ int main(int argc, char *argv[]) {
     // Write the equalized image to a new file each time
     write_png_file(filename, &img);
 
-    // Free the image data on the GPU
-    CHECK(cudaFree(img.data));
+    return 0;
 
     
 }

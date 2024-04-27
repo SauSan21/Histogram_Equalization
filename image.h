@@ -7,6 +7,10 @@
 #pragma once
 #include <png.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct _Image {
     // always 8-bit depth (i.e. one byte per channel, values from 0 to 255)
     int width, height;
@@ -56,3 +60,8 @@ void read_png_file(const char *filename, int color_type, Image* img);
  *     free_image_data(&img);
  */
 void write_png_file(char *filename, Image* img);
+
+#ifdef __cplusplus
+}
+#endif
+
