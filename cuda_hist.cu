@@ -19,7 +19,6 @@
    }                                                                      \
 }
 
-
 __global__ 
 void calculate_histogram(int *histogram, png_byte *image, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -27,46 +26,6 @@ void calculate_histogram(int *histogram, png_byte *image, int size) {
         atomicAdd(&histogram[image[i]], 1);
     }
 }
-
-// __global__ 
-// void exclusive_scan(int *input, png_byte *output, int length) {
-//     extern __shared__ int temp[];  // allocated on invocation
-//     int thid = threadIdx.x + blockIdx.x * blockDim.x;
-//     int offset = 1;
-
-//     if (thid < length) {
-//         temp[thid] = input[thid]; // load input into shared memory
-//     }
-
-//     for (int d = length>>1; d > 0; d >>= 1) { // build sum in place up the tree
-//         __syncthreads();
-//         if (thid < d) {
-//             int ai = offset*thid-1;
-//             int bi = offset*(thid+1)-1;
-//             temp[bi] += temp[ai];
-//         }
-//         offset *= 2;
-//     }
-
-//     if (thid == 0) { temp[length - 1] = 0; } // clear the last element
-
-//     for (int d = 1; d < length; d *= 2) { // traverse down tree & build scan
-//         offset >>= 1;
-//         __syncthreads();
-//         if (thid < d) {
-//             int ai = offset*thid-1;
-//             int bi = offset*(thid+1)-1;
-//             int t   = temp[ai];
-//             temp[ai] = temp[bi];
-//             temp[bi] += t;
-//         }
-//     }
-//     __syncthreads();
-
-//     if (thid < length) {
-//         output[thid] = temp[thid]; // write results to device memory
-//     }
-// }
 
 __global__ 
 void compute_cdf(int *histogram, int *cdf, int length) {
@@ -92,7 +51,6 @@ void equalize(png_byte *image, int *cdf, int size) {
         image[i] = cdf[image[i]];
     }
 }
-
 
 int main(int argc, char *argv[]) {
     // ... (load image into "image" array and initialize "histogram" and "cdf" arrays) ...
@@ -151,6 +109,8 @@ int main(int argc, char *argv[]) {
 
     // Write the equalized image to a new file each time
     write_png_file(filename, &img);
+
+    CHECK(cudaDeviceReset());
 
     return 0;
 
