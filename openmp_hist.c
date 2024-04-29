@@ -50,19 +50,13 @@ int main(int argc, char *argv[]) {
     double best_time = 0.0;
     int NUM_RUNS = 20;
 
-    // Remove the files from previous runs
-    for (int run = 0; run < NUM_RUNS; run++) {
-        char filename[50];
-        sprintf(filename, "equalizer%d.png", run);
-        remove(filename);
-    }
-    
-    if (argc < 2) {
-        printf("Usage: %s <image.png>\n", argv[0]);
+    if (argc < 3) {
+        printf("Usage: %s <input_image.png> <output_image.png>\n", argv[0]);
         return 1;
     }
 
     char *input_file = argv[1];
+    char *output_file = argv[2];
 
     for (int run = 0; run < NUM_RUNS; run++) {
         // Read the image file
@@ -88,12 +82,8 @@ int main(int argc, char *argv[]) {
             best_time = time;
         }
 
-        // Create a new filename for each run
-        char filename[50];
-        sprintf(filename, "equalizer%d.png", run);
-
         // Write the equalized image to a new file each time
-        write_png_file(filename, &img);
+        write_png_file(output_file, &img);
 
         free_image_data(&img);
     }

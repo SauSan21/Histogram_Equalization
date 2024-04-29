@@ -52,63 +52,94 @@ void equalize(png_byte *image, int *cdf, int size) {
     }
 }
 
+__global__
+void mem_only(int *d_histogram, int *d_cdf, int size) {
+    extern shared int temp[]; // allocated on invocation
+    int thid = threadIdx.x;
+
+    // load input into shared memory.
+    // This is exclusive scan, so shift right by one and set first element to 0
+    temp[thid] = (thid > 0) ? histogram[thid-1] : 0;
+    syncthreads();
+
+    for (int offset = 1; offset < length; offset *= 2) {
+        if (thid >= offset) {
+            // add from a stride of 'offset' behind
+            int t = temp[thid - offset];
+            syncthreads();
+            temp[thid] += t;
+        }
+        __syncthreads();
+    }
+    cdf[thid] = temp[thid]; // write result for this thread
+}
+
 int main(int argc, char *argv[]) {
-    // ... (load image into "image" array and initialize "histogram" and "cdf" arrays) ...
-    
+    struct timespec start, end;
+    double best_time = 0.0;
+    int NUM_RUNS = 20;
+
     Image img = {0};
-    if (argc < 2) {
-        printf("Usage: %s <image.png>\n", argv[0]);
+    iif (argc < 3) {
+        printf("Usage: %s <input_image.png> <output_image.png>\n", argv[0]);
         return 1;
     }
 
     char *input_file = argv[1];
-    read_png_file(input_file, PNG_COLOR_TYPE_GRAY, &img);
-    png_byte *image = img.data[0];
-    int size = img.width * img.height;
-    int histogram[MAX_INTENSITY + 1] = {0};
-    int cdf[MAX_INTENSITY + 1] = {0};
+    char *output_file = argv[2];
     
-    png_byte *d_image;
-    int *d_cdf;
-    int *d_histogram;
-    CHECK(cudaMalloc(&d_histogram, (MAX_INTENSITY + 1) * sizeof(int)));
-    CHECK(cudaMalloc(&d_image, size * sizeof(png_byte)));
-    CHECK(cudaMalloc(&d_cdf, (MAX_INTENSITY + 1) * sizeof(int)));
+    for (int run = 0; run < NUM_RUNS; run++) {
+        read_png_file(input_file, PNG_COLOR_TYPE_GRAY, &img);
+        png_byte *image = img.data[0];
+        int size = img.width * img.height;
+        int histogram[MAX_INTENSITY + 1] = {0};
+        int cdf[MAX_INTENSITY + 1] = {0};
+        
+        png_byte *d_image;
+        int *d_cdf;
+        int *d_histogram;
 
-    CHECK(cudaMemcpy(d_histogram, histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyHostToDevice));
-    CHECK(cudaMemcpy(d_image, image, size * sizeof(png_byte), cudaMemcpyHostToDevice));
+        clock_gettime(CLOCK_MONOTONIC, &start); // Start the timer
 
-    calculate_histogram<<<(size + 255) / 256, 256>>>(d_histogram, d_image, size);
+        CHECK(cudaMalloc(&d_histogram, (MAX_INTENSITY + 1) * sizeof(int)));
+        CHECK(cudaMalloc(&d_image, size * sizeof(png_byte)));
+        CHECK(cudaMalloc(&d_cdf, (MAX_INTENSITY + 1) * sizeof(int)));
 
-    CHECK(cudaMemcpy(histogram, d_histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(d_histogram, histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyHostToDevice));
+        CHECK(cudaMemcpy(d_image, image, size * sizeof(png_byte), cudaMemcpyHostToDevice));
 
-    int threadsPerBlock = 256;
-    int blocksPerGrid = (MAX_INTENSITY + threadsPerBlock - 1) / threadsPerBlock;
-    compute_cdf<<<blocksPerGrid, threadsPerBlock>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
+        calculate_histogram<<<(size + 255) / 256, 256>>>(d_histogram, d_image, size);
 
-    CHECK(cudaMemcpy(cdf, d_cdf, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(histogram, d_histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
-    int min_cdf = cdf[0]; // Assuming cdf[0] is the minimum value in the CDF
-    normalize_cdf<<<(MAX_INTENSITY + 255) / 256, 256>>>(d_cdf, size, min_cdf);
+        int threadsPerBlock = 256;
+        int blocksPerGrid = (MAX_INTENSITY + threadsPerBlock - 1) / threadsPerBlock;
+        compute_cdf<<<blocksPerGrid, threadsPerBlock>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
+        //mem_only<<<blocksPerGrid, threadsPerBlock>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
 
-    equalize<<<(size + 255) / 256, 256>>>(d_image, d_cdf, size);
+        CHECK(cudaMemcpy(cdf, d_cdf, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
-    CHECK(cudaMemcpy(image, d_image, size * sizeof(png_byte), cudaMemcpyDeviceToHost));
+        int min_cdf = cdf[0]; // Assuming cdf[0] is the minimum value in the CDF
+        normalize_cdf<<<(MAX_INTENSITY + 255) / 256, 256>>>(d_cdf, size, min_cdf);
 
+        equalize<<<(size + 255) / 256, 256>>>(d_image, d_cdf, size);
 
+        CHECK(cudaMemcpy(image, d_image, size * sizeof(png_byte), cudaMemcpyDeviceToHost));
 
-    CHECK(cudaFree(d_histogram));
-    CHECK(cudaFree(d_image));
-    CHECK(cudaFree(d_cdf));
+        clock_gettime(CLOCK_MONOTONIC, &end); // get the end time
+        double time = get_time_diff(&start, &end); // compute average difference
+        if (run == 0 || time < best_time) {
+            best_time = time;
+        }
+    
 
+        CHECK(cudaFree(d_histogram));
+        CHECK(cudaFree(d_image));
+        CHECK(cudaFree(d_cdf));
 
-    // ... (save image to disk) ...
-
-    char filename[50];
-    sprintf(filename, "equalizer%d.png");
-
-    // Write the equalized image to a new file each time
-    write_png_file(filename, &img);
+        // Write the equalized image to a new file each time
+        write_png_file(output_file, &img);
+    }
 
     CHECK(cudaDeviceReset());
 
