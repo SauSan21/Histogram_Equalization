@@ -21,53 +21,64 @@
 
 
 __global__ 
-void calculate_histogram(unsigned int *histogram, png_byte *image, int size) {
+void calculate_histogram(int *histogram, png_byte *image, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
         atomicAdd(&histogram[image[i]], 1);
     }
 }
 
+// __global__ 
+// void exclusive_scan(int *input, png_byte *output, int length) {
+//     extern __shared__ int temp[];  // allocated on invocation
+//     int thid = threadIdx.x + blockIdx.x * blockDim.x;
+//     int offset = 1;
+
+//     if (thid < length) {
+//         temp[thid] = input[thid]; // load input into shared memory
+//     }
+
+//     for (int d = length>>1; d > 0; d >>= 1) { // build sum in place up the tree
+//         __syncthreads();
+//         if (thid < d) {
+//             int ai = offset*thid-1;
+//             int bi = offset*(thid+1)-1;
+//             temp[bi] += temp[ai];
+//         }
+//         offset *= 2;
+//     }
+
+//     if (thid == 0) { temp[length - 1] = 0; } // clear the last element
+
+//     for (int d = 1; d < length; d *= 2) { // traverse down tree & build scan
+//         offset >>= 1;
+//         __syncthreads();
+//         if (thid < d) {
+//             int ai = offset*thid-1;
+//             int bi = offset*(thid+1)-1;
+//             int t   = temp[ai];
+//             temp[ai] = temp[bi];
+//             temp[bi] += t;
+//         }
+//     }
+//     __syncthreads();
+
+//     if (thid < length) {
+//         output[thid] = temp[thid]; // write results to device memory
+//     }
+// }
+
 __global__ 
-void exclusive_scan(unsigned int *input, png_byte *output, int length) {
-    extern __shared__ int temp[];  // allocated on invocation
-    int thid = threadIdx.x;
-    int offset = 1;
-
-    temp[2*thid] = input[2*thid]; // load input into shared memory
-    temp[2*thid+1] = input[2*thid+1];
-
-    for (int d = length>>1; d > 0; d >>= 1) { // build sum in place up the tree
-        __syncthreads();
-        if (thid < d) {
-            int ai = offset*(2*thid+1)-1;
-            int bi = offset*(2*thid+2)-1;
-            temp[bi] += temp[ai];
-        }
-        offset *= 2;
+void compute_cdf(int *histogram, int *cdf, int length) {
+    int sum = 0;
+    for (int i = 0; i < length; i++) {
+        sum += histogram[i];
+        cdf[i] = sum;
     }
-
-    if (thid == 0) { temp[length - 1] = 0; } // clear the last element
-
-    for (int d = 1; d < length; d *= 2) { // traverse down tree & build scan
-        offset >>= 1;
-        __syncthreads();
-        if (thid < d) {
-            int ai = offset*(2*thid+1)-1;
-            int bi = offset*(2*thid+2)-1;
-            int t   = temp[ai];
-            temp[ai] = temp[bi];
-            temp[bi] += t;
-        }
-    }
-    __syncthreads();
-
-    output[2*thid] = temp[2*thid]; // write results to device memory
-    output[2*thid+1] = temp[2*thid+1];
 }
 
 __global__ 
-void normalize_cdf(png_byte *cdf, int size, int min_cdf) {
+void normalize_cdf(int *cdf, int size, int min_cdf) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i <= MAX_INTENSITY) {
         cdf[i] = ((cdf[i] - min_cdf) * MAX_INTENSITY) / (size - min_cdf);
@@ -75,7 +86,7 @@ void normalize_cdf(png_byte *cdf, int size, int min_cdf) {
 }
 
 __global__ 
-void equalize(png_byte *image, png_byte *cdf, int size) {
+void equalize(png_byte *image, int *cdf, int size) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < size) {
         image[i] = cdf[image[i]];
@@ -99,8 +110,9 @@ int main(int argc, char *argv[]) {
     int histogram[MAX_INTENSITY + 1] = {0};
     int cdf[MAX_INTENSITY + 1] = {0};
     
-    png_byte *d_image, *d_cdf;
-    unsigned int *d_histogram;
+    png_byte *d_image;
+    int *d_cdf;
+    int *d_histogram;
     CHECK(cudaMalloc(&d_histogram, (MAX_INTENSITY + 1) * sizeof(int)));
     CHECK(cudaMalloc(&d_image, size * sizeof(png_byte)));
     CHECK(cudaMalloc(&d_cdf, (MAX_INTENSITY + 1) * sizeof(int)));
@@ -112,7 +124,9 @@ int main(int argc, char *argv[]) {
 
     CHECK(cudaMemcpy(histogram, d_histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
-    exclusive_scan<<<1, MAX_INTENSITY + 1, (MAX_INTENSITY + 1) * sizeof(int)>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (MAX_INTENSITY + threadsPerBlock - 1) / threadsPerBlock;
+    compute_cdf<<<blocksPerGrid, threadsPerBlock>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
 
     CHECK(cudaMemcpy(cdf, d_cdf, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
