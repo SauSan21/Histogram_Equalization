@@ -1,3 +1,18 @@
+/*
+* This program reads an image file, calculates the histogram of the image, 
+* calculates the cumulative distribution function (CDF) of the histogram, 
+* normalizes the CDF to the range [0, 255], and equalizes the image using the CDF.
+* The program uses OpenMP to parallelize the histogram calculation, normalizing cdf, 
+* and equalizing the image.
+* 
+* To compile the program, run:
+* Local: gcc-13 -Wall -O3 -fopenmp $(libpng-config --I_opts) image.c openmp_hist.c -o openmp_hist $(libpng-config --L_opts) -lpng
+* Cluster or Expanse: gcc -Wall -O3 -fopenmp $(libpng-config --I_opts) image.c openmp_hist.c -o openmp_hist $(libpng-config --L_opts) -lpng
+*
+* To run the program, run:
+* ./openmp_hist <input_image.png> <output_image.png>
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
@@ -6,11 +21,17 @@
 
 #define MAX_INTENSITY 255
 
+// Get the difference in time between two timespec structs in seconds
 double get_time_diff(struct timespec *start, struct timespec *end) {
     return (end->tv_sec - start->tv_sec) + (end->tv_nsec - start->tv_nsec) / 1000000000.0;
 }
 
-// Calculate the histogram of the image
+/*
+* Calculate the histogram of the image.
+* The histogram is an array where the value at index i is the number of pixels with intensity i.
+* The image is a 1D array of pixels with intensity values in the range [0, 255].
+* The size is the number of pixels in the image.
+*/
 void calculate_histogram(int histogram[], png_byte* image, int size) {
     #pragma omp parallel for default(none) shared(histogram, image, size) num_threads(4) schedule(dynamic, size/4)
     for(int i = 0; i < size; i++) {
@@ -19,7 +40,10 @@ void calculate_histogram(int histogram[], png_byte* image, int size) {
     }
 }
 
-// Calculate the cumulative distribution function (CDF) of the histogram
+/*
+* Calculate the cumulative distribution function (CDF) of the histogram.
+* The CDF is an array where the value at index i is the sum of the histogram values from 0 to i.
+*/
 void calculate_cdf(int cdf[], int histogram[]) {
     cdf[0] = histogram[0];
     for(int i = 1; i <= MAX_INTENSITY; i++) {
@@ -27,7 +51,11 @@ void calculate_cdf(int cdf[], int histogram[]) {
     }
 }
 
-// Normalize the CDF to the range [0, 255]
+/*
+* Normalize the CDF to the range [0, 255].
+* The CDF values are scaled to the range [0, 255] based on the minimum non-zero value in the CDF.
+* This ensures that the CDF values are spread out over the entire range.
+*/
 void normalize_cdf(int cdf[], int size) {
     int min_cdf = 0;
     while(cdf[min_cdf] == 0) min_cdf++;
@@ -37,7 +65,11 @@ void normalize_cdf(int cdf[], int size) {
     }
 }
 
-// Equalize the image using the CDF
+/*
+* Equalize the image using the CDF.
+* The intensity values of the image pixels are replaced with the corresponding CDF values.
+* This spreads out the intensity values over the entire range, improving the contrast of the image.
+*/
 void equalize_image(png_byte* image, int cdf[], int size) {
     #pragma omp parallel for default(none) shared(image, cdf, size) num_threads(4) 
     for(int i = 0; i < size; i++) {
@@ -46,10 +78,12 @@ void equalize_image(png_byte* image, int cdf[], int size) {
 }
 
 int main(int argc, char *argv[]) {
+    // Get the start time
     struct timespec start, end;
-    double best_time = 0.0;
-    int NUM_RUNS = 20;
+    double total_time = 0.0;
+    int NUM_RUNS = 1000;
 
+    // Check for the correct number of arguments
     if (argc < 3) {
         printf("Usage: %s <input_image.png> <output_image.png>\n", argv[0]);
         return 1;
@@ -58,6 +92,7 @@ int main(int argc, char *argv[]) {
     char *input_file = argv[1];
     char *output_file = argv[2];
 
+    // Run the program multiple times to calculate the average time
     for (int run = 0; run < NUM_RUNS; run++) {
         // Read the image file
         Image img = {0};
@@ -78,20 +113,18 @@ int main(int argc, char *argv[]) {
 
         clock_gettime(CLOCK_MONOTONIC, &end); // get the end time
         double time = get_time_diff(&start, &end); // compute average difference
-        if (run == 0 || time < best_time) {
-            best_time = time;
-        }
+        total_time += time;
 
         // Write the equalized image to a new file each time
         write_png_file(output_file, &img);
 
+        // Free the image data
         free_image_data(&img);
     }
 
-    printf("Best time: %f\n", best_time);
-
-
-    // Free the image data
+    // Calculate the average time and print it
+    double avg_time = total_time / NUM_RUNS;
+    printf("Average time: %f\n", avg_time);
     
     return 0;
 }
