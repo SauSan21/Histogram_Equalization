@@ -59,9 +59,11 @@ double get_time_diff(struct timespec *start, struct timespec *end) {
 * The kernel uses atomicAdd which is a thread-safe operation to update the histogram array.
 */
 __global__ 
-void calculate_histogram(int *histogram, png_byte *image, int size) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size) {
+void calculate_histogram(int *histogram, png_byte *image, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < width && y < height) {
+        int i = y * width + x;
         atomicAdd(&histogram[image[i]], 1);
     }
 }
@@ -86,10 +88,14 @@ void compute_cdf(int *histogram, int *cdf, int length) {
 * The kernel normalizes the CDF and updates the CDF array.
 */
 __global__ 
-void normalize_cdf(int *cdf, int size, int min_cdf) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i <= MAX_INTENSITY) {
-        cdf[i] = ((cdf[i] - min_cdf) * MAX_INTENSITY) / (size - min_cdf);
+void normalize_cdf(int *cdf, int width, int height, int min_cdf) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < width && y < height) {
+        int i = y * width + x;
+        if (i <= MAX_INTENSITY) {
+            cdf[i] = ((cdf[i] - min_cdf) * MAX_INTENSITY) / ((width * height) - min_cdf);
+        }
     }
 }
 
@@ -99,9 +105,11 @@ void normalize_cdf(int *cdf, int size, int min_cdf) {
 * The kernel equalizes the image using the normalized CDF and updates the image array.
 */
 __global__ 
-void equalize(png_byte *image, int *cdf, int size) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < size) {
+void equalize(png_byte *image, int *cdf, int width, int height) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if (x < width && y < height) {
+        int i = y * width + x;
         image[i] = cdf[image[i]];
     }
 }
@@ -132,7 +140,7 @@ int main(int argc, char *argv[]) {
     // Get the start time
     struct timespec start, end;
     double total_time = 0.0;
-    int NUM_RUNS = 1000;
+    int NUM_RUNS = 20;
 
     // Check the number of arguments
     if (argc < 3) {
@@ -152,6 +160,8 @@ int main(int argc, char *argv[]) {
         // Calculate the histogram, CDF and equalize the image
         png_byte *image = img.data[0];
         int size = img.width * img.height;
+        int width = img.width;
+        int height = img.height;
         int histogram[MAX_INTENSITY + 1] = {0};
         int cdf[MAX_INTENSITY + 1] = {0};
         
@@ -171,15 +181,17 @@ int main(int argc, char *argv[]) {
         CHECK(cudaMemcpy(d_image, image, size * sizeof(png_byte), cudaMemcpyHostToDevice));
 
         // Calculate the histogram of the image
-        calculate_histogram<<<(size + 255) / 256, 256>>>(d_histogram, d_image, size);
+        dim3 threadsPerBlock(16, 16);
+        dim3 numBlocks((width + threadsPerBlock.x - 1) / threadsPerBlock.x, (height + threadsPerBlock.y - 1) / threadsPerBlock.y);
+        calculate_histogram<<<numBlocks, threadsPerBlock>>>(d_histogram, d_image, width, height);
 
         // Copy the histogram to the host
         CHECK(cudaMemcpy(histogram, d_histogram, (MAX_INTENSITY + 1) * sizeof(int), cudaMemcpyDeviceToHost));
 
         // Calculate the CDF of the histogram
-        int threadsPerBlock = 256;
-        int blocksPerGrid = (MAX_INTENSITY + threadsPerBlock - 1) / threadsPerBlock;
-        compute_cdf<<<blocksPerGrid, threadsPerBlock>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
+        int threadsPerBlock2 = 256;
+        int blocksPerGrid = (MAX_INTENSITY + threadsPerBlock2 - 1) / threadsPerBlock2;
+        compute_cdf<<<blocksPerGrid, threadsPerBlock2>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
         //mem_only<<<blocksPerGrid, threadsPerBlock>>>(d_histogram, d_cdf, MAX_INTENSITY + 1);
 
         // Copy the CDF to the host
@@ -187,10 +199,10 @@ int main(int argc, char *argv[]) {
 
         int min_cdf = cdf[0]; // Assuming cdf[0] is the minimum value in the CDF
         // Normalize the CDF
-        normalize_cdf<<<(MAX_INTENSITY + 255) / 256, 256>>>(d_cdf, size, min_cdf);
+        normalize_cdf<<<numBlocks, threadsPerBlock>>>(d_cdf, width, height, min_cdf);
 
         // Equalize the image
-        equalize<<<(size + 255) / 256, 256>>>(d_image, d_cdf, size);
+        equalize<<<numBlocks, threadsPerBlock>>>(d_image, d_cdf, width, height);
 
         // Copy the equalized image to the host
         CHECK(cudaMemcpy(image, d_image, size * sizeof(png_byte), cudaMemcpyDeviceToHost));

@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     // Get the start time
     struct timespec start, end;
     double total_time = 0.0;
-    int NUM_RUNS = 1000;
+    int NUM_RUNS = 20;
 
     // Check for the correct number of arguments
     if (argc < 3) {
